@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="com.a2vec.tagboard"
+    android:versionCode="2"
+    android:versionName="1.1">
+
+    <uses-sdk android:minSdkVersion="24" android:targetSdkVersion="34" />
+
+    <!-- 标定用：屏幕常亮、全屏、不熄屏 -->
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <!-- 标定端口要在局域网监听。Android 上创建任何 socket 都需要 INTERNET，
+         即使是纯监听不联网也一样，缺了会 EPERM。 -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+
+    <application
+        android:label="A2Vec 标定板"
+        android:hardwareAccelerated="true"
+        android:allowBackup="false"
+        android:theme="@style/TagBoardTheme">
+
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:screenOrientation="landscape"
+            android:windowLayoutInDisplayCutoutMode="shortEdges"
+            android:launchMode="singleTask"
+            android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden|density|uiMode|navigation">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+    </application>
+</manifest>

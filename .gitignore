@@ -1,0 +1,8 @@
+build/
+keystore/
+*.apk
+*.idsig
+*.class
+*.pgm
+__pycache__/
+.DS_Store

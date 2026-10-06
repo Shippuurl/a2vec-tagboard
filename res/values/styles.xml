@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- 纯黑、无 ActionBar、无系统栏。全屏由 Activity 里的沉浸式代码保证。 -->
+    <style name="TagBoardTheme" parent="@android:style/Theme.Material.NoActionBar.Fullscreen">
+        <item name="android:windowBackground">@android:color/black</item>
+        <item name="android:colorBackground">@android:color/black</item>
+        <item name="android:windowNoTitle">true</item>
+        <item name="android:windowFullscreen">true</item>
+        <item name="android:windowContentOverlay">@null</item>
+        <!-- 必须让内容进入挖孔区，否则整屏宽度会被砍掉 120px（vivo X100 Pro 实测），
+             板子只占屏宽 95.7%，tag 物理尺寸会系统性偏小 4.3% -->
+        <item name="android:windowLayoutInDisplayCutoutMode">shortEdges</item>
+    </style>
+</resources>

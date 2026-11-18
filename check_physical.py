@@ -6,11 +6,7 @@
 用深度图拿到 Z，就能反推 tag_size_m；再结合 app 报的几何比例反推屏幕宽度，
 和 app 用 xDpi 算出的屏幕宽度比对。两条独立链路一致 => 尺寸可信。
 
-用法： adb forward tcp:8899 tcp:8899
-       A2VEC_CAMERAS=/path/to/cameras.json python3 check_physical.py
-
-相机内参不属于本仓库：脚本只从 $A2VEC_CAMERAS（或本目录下的 config/cameras.json）读，
-需要的字段是 `cameras.wrist.color_intrinsics`，取 `[0][0]` 作为 fx。
+用法： python3 android/TagBoard/check_physical.py
 """
 import json
 import os
@@ -18,8 +14,8 @@ import sys
 
 import numpy as np
 
-HERE = os.path.dirname(os.path.abspath(__file__))
-WRIST_CFG = os.environ.get("A2VEC_CAMERAS") or os.path.join(HERE, "config", "cameras.json")
+REPO = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".."))
+WRIST_CFG = os.path.join(REPO, "config", "cameras.json")
 
 BASE_CELL = 236
 BASE_TAG = 165
@@ -46,10 +42,6 @@ def main():
     print(f"tag 边长    {g['tag_mm']:.4f} mm     tag_size_m = {g['tag_size_m']:.8f}")
 
     # 2) 用相机实测的 tag 像素反推
-    if not os.path.exists(WRIST_CFG):
-        print(f"\n读不到相机内参：{WRIST_CFG}")
-        print("用 A2VEC_CAMERAS=/path/to/cameras.json 指定（需要 cameras.wrist.color_intrinsics）。")
-        return 1
     cfg = json.load(open(WRIST_CFG))
     wrist = cfg["cameras"]["wrist"]
     K = np.array(wrist["color_intrinsics"], float)
@@ -64,7 +56,7 @@ def main():
     for note, Z, tpx in samples:
         tag_m = tpx * (Z / 1000.0) / fx
         tag_mm = tag_m * 1000.0
-        # app 里 tag 边长 = 板内容宽 * 165/content_px（板内容宽是屏上实宽，不等于屏宽）
+        # app 里 tag 边长 = 板宽 * 165/1920，板宽 = 屏宽 * (boardW/vw)
         board_on_screen = b["width_on_screen_mm"]
         # App reports the active layout; do not assume the legacy 8-column board.
         content_px = b["image_px"][0]
@@ -75,7 +67,7 @@ def main():
 
     print(f"""
 说明：
-  - "反推屏宽" = 实测 tag 边长 / (165 / 板内容宽 px) / (板屏上宽 / 屏宽)
+  - "反推屏宽" = 实测 tag 边长 / (165/1920) / (板屏上宽/屏宽)
   - 与上面用 xDpi 算出的 {s['width_mm']:.2f} mm 比对，差异应在 1~2% 以内才可信
   - 深度图会把手机背面当成屏幕（手机屏幕是红外镜面），所以 Z 会偏小约一个机身厚度；
     真要精确定尺寸，用"示教触碰"：把 TCP 碰到屏幕上，读 TCP 位置，误差 < 1%

@@ -33,6 +33,31 @@ public class CalibServer implements Runnable {
 
     public static final int DEFAULT_PORT = 8899;
 
+    private final java.util.concurrent.ExecutorService clients = java.util.concurrent.Executors.newFixedThreadPool(16);
+    private final java.util.Set<Socket> sockets = java.util.concurrent.ConcurrentHashMap.newKeySet();
+    private final Object updates = new Object();
+    private volatile String snapshot = "";
+    private long revision;
+    // Called on UI only, once after geometry has settled.
+    public void publish() {
+        String json = view.toJson(false);
+        synchronized (updates) { snapshot = json; ++revision; updates.notifyAll(); }
+    }
+    private void subscribe(Socket socket) throws Exception {
+        OutputStream out = socket.getOutputStream();
+        out.write(("HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nCache-Control: no-cache\r\nAccess-Control-Allow-Origin: *\r\nConnection: keep-alive\r\n\r\n").getBytes("UTF-8"));
+        long seen = -1;
+        while (running) {
+            String message;
+            synchronized (updates) {
+                if (seen == revision || snapshot.isEmpty()) updates.wait(15000);
+                message = seen != revision && !snapshot.isEmpty() ? "data: " + snapshot + "\n\n" : ": keepalive\n\n";
+                seen = revision;
+            }
+            out.write(message.getBytes("UTF-8")); out.flush();
+        }
+    }
+
     private final int port;
     private final TagBoardView view;
     private ServerSocket server;
@@ -75,6 +100,9 @@ public class CalibServer implements Runnable {
 
     public void stop() {
         running = false;
+        synchronized (updates) { updates.notifyAll(); }
+        for (Socket socket : sockets) try { socket.close(); } catch (IOException ignored) {}
+        clients.shutdownNow();
         try {
             if (server != null) server.close();
         } catch (IOException ignored) {
@@ -108,7 +136,10 @@ public class CalibServer implements Runnable {
         while (running) {
             try {
                 Socket s = server.accept();
-                handle(s);
+                // Bound clients; a slow reader never blocks accept or the UI.
+                if (sockets.size() >= 16) { s.close(); continue; }
+                sockets.add(s);
+                clients.execute(() -> handle(s));
             } catch (SocketTimeoutException ignored) {
             } catch (IOException e) {
                 if (running) status = "连接错误: " + e.getMessage();
@@ -140,6 +171,9 @@ public class CalibServer implements Runnable {
             int q = path.indexOf('?');
             if (q >= 0) { query = path.substring(q + 1); path = path.substring(0, q); }
 
+            if (path.equals("/tagboard/events") && method.equals("GET")) {
+                subscribe(s); return;
+            }
             String body;
             String type = "application/json; charset=utf-8";
             if (path.equals("/") || path.equals("/index.html")) {
@@ -151,7 +185,7 @@ public class CalibServer implements Runnable {
                         + "  GET  /health\n"
                         + "  POST /tagboard/pose    回传相机位姿\n";
             } else if (path.equals("/tagboard.json")) {
-                body = onUi(() -> view.toJson(false));
+                body = snapshot.isEmpty() ? onUi(() -> view.toJson(false)) : snapshot;
             } else if (path.equals("/tagboard/params")) {
                 body = onUi(() -> view.toJson(true));
             } else if (path.equals("/tagboard/board.png")) {
@@ -193,6 +227,7 @@ public class CalibServer implements Runnable {
             }
         } finally {
             try {
+                sockets.remove(s);
                 s.close();
             } catch (IOException ignored) {
             }

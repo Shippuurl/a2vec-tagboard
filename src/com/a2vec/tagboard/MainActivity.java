@@ -18,6 +18,7 @@ public class MainActivity extends Activity implements View.OnClickListener {
 
     private TagBoardView view;
     private CalibServer server;
+    private Discovery   discovery;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -66,10 +67,30 @@ public class MainActivity extends Activity implements View.OnClickListener {
                 .setNegativeButton("取消", (dialog, which) -> goImmersive()).show();
             return true;
         });
-        setContentView(view);
+
+        // 启动动画盖在板面上；点一下或动画播完就撤掉
+        final android.widget.FrameLayout root = new android.widget.FrameLayout(this);
+        root.addView(view, new android.widget.FrameLayout.LayoutParams(
+                android.view.ViewGroup.LayoutParams.MATCH_PARENT,
+                android.view.ViewGroup.LayoutParams.MATCH_PARENT));
+        setContentView(root);
+
+        final LogoIntroView intro = new LogoIntroView(this);
+        intro.setOnDone(() -> {
+            root.removeView(intro);
+            goImmersive();
+        });
+        root.addView(intro, new android.widget.FrameLayout.LayoutParams(
+                android.view.ViewGroup.LayoutParams.MATCH_PARENT,
+                android.view.ViewGroup.LayoutParams.MATCH_PARENT));
+        intro.start();
 
         server = new CalibServer(CalibServer.DEFAULT_PORT, view);
+        view.setOnBoardChanged(() -> server.publish());
         server.start();
+        final android.util.DisplayMetrics scanDm = getResources().getDisplayMetrics();
+        discovery = new Discovery(this, server.getPort(), scanDm.widthPixels, scanDm.heightPixels);
+        discovery.start();
         view.setServerStatus(true, CalibServer.localIpv4() + ":" + server.getPort()
                 + "   GET /tagboard.json");
 
@@ -78,6 +99,7 @@ public class MainActivity extends Activity implements View.OnClickListener {
 
     @Override
     protected void onDestroy() {
+        if (discovery != null) discovery.stop();
         if (server != null) server.stop();
         super.onDestroy();
     }

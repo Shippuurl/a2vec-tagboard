@@ -4,10 +4,12 @@ import android.content.Context;
 import android.graphics.Bitmap;
 import android.graphics.Canvas;
 import android.graphics.Paint;
-import android.graphics.RectF;
 import android.graphics.Typeface;
 import android.util.DisplayMetrics;
 import android.view.View;
+import android.view.MotionEvent;
+import android.view.ScaleGestureDetector;
+import android.view.ViewConfiguration;
 
 /** Selectable staggered AprilTag board. Geometry and IDs come from BoardSpec.
  * Physical dimensions use the same final viewport scale as rendering.
@@ -48,7 +50,18 @@ public class TagBoardView extends View {
     private final float screenWmm, screenHmm;
     private final float pxPerMm;          // = xdpi / 25.4，边缘刻度的唯一依据
 
-    private Bitmap board;
+    private ScaleGestureDetector pinch;
+    private float gridDensity = 4f;
+    private boolean touching;
+    /** 本次手势是否已经「不算长按」：落过第二根手指，或单指拖动超过 touch slop。 */
+    private boolean gestureMoved;
+    private final int touchSlop;
+    private float downX, downY;
+    private Runnable onBoardChanged;
+    private final Runnable commit = () -> { if (!touching && onBoardChanged != null) onBoardChanged.run(); };
+    public void setOnBoardChanged(Runnable callback) { onBoardChanged = callback; }
+    private void scheduleCommit() { removeCallbacks(commit); postDelayed(commit, 1000); }
+
     private float boardScale = 1f;
     private float boardLeft, boardTop, boardW, boardH;
     private boolean boardFitsWidth = true;
@@ -57,7 +70,6 @@ public class TagBoardView extends View {
     private String serverStatus = "启动中…";
     private String poseText = "";
 
-    private final Paint fill = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Paint text = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Paint mono = new Paint(Paint.ANTI_ALIAS_FLAG);
 
@@ -81,13 +93,66 @@ public class TagBoardView extends View {
         this.screenHmm = hmm;
         this.pxPerMm = (float) (xdpi / 25.4);
 
-        fill.setStyle(Paint.Style.FILL);
         text.setColor(C_TEXT);
         mono.setColor(C_TEXT);
         mono.setTypeface(Typeface.MONOSPACE);
 
-        buildBoard();
+        this.touchSlop = ViewConfiguration.get(context).getScaledTouchSlop();
+        gridDensity = BoardSpec.tagCols();
+        pinch = new ScaleGestureDetector(context, new ScaleGestureDetector.SimpleOnScaleGestureListener() {
+            @Override public boolean onScale(ScaleGestureDetector detector) {
+                gridDensity = Math.max(1f, Math.min(20f, gridDensity / detector.getScaleFactor()));
+                int n = Math.round(gridDensity);
+                if (BoardSpec.tagCols() != n || BoardSpec.boardRows() != n) {
+                    BoardSpec.selectGrid(n, n);
+                    onSizeChanged(getWidth(), getHeight(), getWidth(), getHeight());
+                    postInvalidateOnAnimation();
+                }
+                return true;
+            }
+        });
     }
+
+    @Override public boolean onTouchEvent(MotionEvent event) {
+        removeCallbacks(commit);
+        final int action = event.getActionMasked();
+
+        switch (action) {
+            case MotionEvent.ACTION_DOWN:
+                gestureMoved = false;
+                downX = event.getX();
+                downY = event.getY();
+                break;
+            case MotionEvent.ACTION_POINTER_DOWN:
+                // 第二根手指落下 = 用户要缩放/平移，长按立刻作废。
+                // View 自带的长按只认「单指超出 slop」，完全不看手指数量，
+                // 双指按住不动 500ms 就会弹布局对话框 —— 这就是那个冲突的来源。
+                gestureMoved = true;
+                cancelLongPress();
+                break;
+            case MotionEvent.ACTION_MOVE:
+                if (!gestureMoved) {
+                    final float dx = event.getX() - downX;
+                    final float dy = event.getY() - downY;
+                    if (dx * dx + dy * dy > (float) touchSlop * touchSlop) {
+                        gestureMoved = true;
+                        cancelLongPress();
+                    }
+                }
+                break;
+            default:
+                break;
+        }
+
+        pinch.onTouchEvent(event);
+
+        touching = action != MotionEvent.ACTION_UP && action != MotionEvent.ACTION_CANCEL;
+        if (!touching) scheduleCommit();
+
+        super.onTouchEvent(event);
+        return true;
+    }
+    @Override protected void onDetachedFromWindow() { removeCallbacks(commit); super.onDetachedFromWindow(); }
 
     private float dp(float v) {
         return v * density;
@@ -100,62 +165,79 @@ public class TagBoardView extends View {
         return p;
     }
 
-    /** 在基线坐标系里把整块板画成 bitmap；之后统一缩放贴到屏幕。 */
-    private void buildBoard() {
+    /**
+     * 在**设备像素空间**直接画板面。
+     *
+     * 这里刻意不再「先把板画成一张基线位图，再整体缩放贴到屏幕」：标定靶每个
+     * module 的边界都必须落在整像素上，任何中间缩放都会让模块宽度忽宽忽窄。
+     * 之前把每个 tag 光栅化成 8×8 像素再放大 20 倍，模块宽度就全乱了，
+     * 这就是 tag 看起来「糊成一团」的原因。
+     * 现在所有坐标都在设备像素里算，边界统一 round()，模块宽度最多差 1px 且均匀分布。
+     */
+    private void drawBoard(Canvas c, float left, float top, float scale) {
         BOARD_COLS = BoardSpec.boardCols(); BOARD_ROWS = BoardSpec.boardRows(); N_TAG_COLS = BoardSpec.tagCols();
-        final int w = BoardSpec.boardWidthPx();
-        final int h = BOARD_ROWS * BASE_CELL;
-        board = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888);
-        Canvas c = new Canvas(board);
-        c.drawColor(C_BOARD);
-        Paint black = solid(C_TAG);
-        Paint white = solid(C_BOARD);
 
-        // 棋盘：(行 + 列) 为奇 -> 黑方块；为偶 -> 白格（tag 所在格）
-        for (int r = 0; r < BOARD_ROWS; r++) {
-            for (int col = 0; col < BOARD_COLS; col++) {
-                Paint p = (((r + col) & 1) == 1) ? black : white;
-                float left = BoardSpec.originMarginX() + col * BASE_CELL;
-                c.drawRect(left, r * BASE_CELL,
-                        left + BASE_CELL, (r + 1) * BASE_CELL, p);
+        final Paint white = solid(C_BOARD);
+        final Paint black = solid(C_TAG);
+        // 靶面边缘要硬：抗锯齿会在黑白交界留一圈灰，阈值化时反而更难判黑白
+        white.setAntiAlias(false);
+        black.setAntiAlias(false);
+
+        // 底色（含左右白边）
+        c.drawRect(left, top,
+                left + BoardSpec.contentW() * scale,
+                top + BoardSpec.contentH() * scale, white);
+
+        for (int r = 0; r < BOARD_ROWS; ++r) {
+            for (int col = 0; col < BOARD_COLS; ++col) {
+                if (((r + col) & 1) == 1) {
+                    final float x0 = left + (BoardSpec.originMarginX() + col * BASE_CELL) * scale;
+                    final float x1 = left + (BoardSpec.originMarginX() + (col + 1) * BASE_CELL) * scale;
+                    final float y0 = top + r * BASE_CELL * scale;
+                    final float y1 = top + (r + 1) * BASE_CELL * scale;
+                    c.drawRect(Math.round(x0), Math.round(y0), Math.round(x1), Math.round(y1), black);
+                }
             }
-        }
-        for (int r = 0; r < BOARD_ROWS; r++) {
-            for (int i = 0; i < N_TAG_COLS; i++) {
-                int col = 2 * i + (r & 1);
-                float x = BoardSpec.originMarginX() + col * BASE_CELL + TAG_INSET_X;
-                float y = r * BASE_CELL + TAG_INSET_Y;
-                c.drawRect(x, y, x + BASE_TAG, y + BASE_TAG, white);
-                drawTag(c, TAG_PATTERN[r * N_TAG_COLS + i], x, y, BASE_TAG, black);
+            for (int i = 0; i < N_TAG_COLS; ++i) {
+                final float x = left + (BoardSpec.originMarginX() + (2 * i + (r & 1)) * BASE_CELL + TAG_INSET_X) * scale;
+                final float y = top + (r * BASE_CELL + TAG_INSET_Y) * scale;
+                drawTag(c, TAG_PATTERN[r * N_TAG_COLS + i], x, y, BASE_TAG * scale, white, black);
             }
         }
     }
 
     /**
-     * 把 6x6 数据点阵画进 size x size 的方块，数据格直接铺满（无内圈白边）。
-     * 每个格边界 round 到整像素；size=165 时每格 27.5px。
+     * 在 size×size 的设备像素方块里画一个 tag36h11（8×8 module，含 1 module 黑框）。
+     * 先按 round() 求出 9 条 module 边界存进数组，再照数组画矩形——这样同一行里的
+     * 模块宽度只差 0~1px 且不会累积漂移，整块正好占满 size。
      */
-    private void drawTag(Canvas c, String pat, float x0, float y0, float size, Paint black) {
-        final int n = TAG_BITS + 2 * TAG_BORDER_BITS;
+    private void drawTag(Canvas c, String pat, float x0, float y0, float size, Paint white, Paint black) {
+        final int n = TAG_BITS + 2 * TAG_BORDER_BITS;   // 8
         final float u = size / n;
-        // 一圈黑框（先画，后面的数据格盖在上面）。
-        // 顺序不能反：先画数据再画框会把数据擦掉，先画白底再画框也会把框擦掉。
-        if (TAG_BORDER_BITS > 0) {
-            black.setColor(C_TAG);
-            c.drawRect(x0, y0, x0 + u, y0 + size, black);
-            c.drawRect(x0 + size - u, y0, x0 + size, y0 + size, black);
-            c.drawRect(x0, y0, x0 + size, y0 + u, black);
-            c.drawRect(x0, y0 + size - u, x0 + size, y0 + size, black);
+
+        // 先铺白底：tag 可能压在棋盘格的黑格上
+        c.drawRect(Math.round(x0), Math.round(y0),
+                Math.round(x0 + size), Math.round(y0 + size), white);
+
+        final int[] ex = new int[n + 1];
+        final int[] ey = new int[n + 1];
+        for (int k = 0; k <= n; k++) {
+            ex[k] = Math.round(x0 + k * u);
+            ey[k] = Math.round(y0 + k * u);
         }
-        black.setColor(C_TAG);
+
+        // 一圈黑框
+        final int b = TAG_BORDER_BITS;
+        c.drawRect(ex[0], ey[0], ex[b], ey[n], black);          // 左
+        c.drawRect(ex[n - b], ey[0], ex[n], ey[n], black);      // 右
+        c.drawRect(ex[0], ey[0], ex[n], ey[b], black);          // 上
+        c.drawRect(ex[0], ey[n - b], ex[n], ey[n], black);      // 下
+
+        // 6×6 数据格
         for (int r = 0; r < TAG_BITS; r++) {
             for (int col = 0; col < TAG_BITS; col++) {
                 if (pat.charAt(r * TAG_BITS + col) != '1') continue;
-                float l = x0 + (col + TAG_BORDER_BITS) * u;
-                float rr = x0 + (col + TAG_BORDER_BITS + 1) * u;
-                float t = y0 + (r + TAG_BORDER_BITS) * u;
-                float b = y0 + (r + TAG_BORDER_BITS + 1) * u;
-                c.drawRect(Math.round(l), Math.round(t), Math.round(rr), Math.round(b), black);
+                c.drawRect(ex[col + b], ey[r + b], ex[col + b + 1], ey[r + b + 1], black);
             }
         }
     }
@@ -167,10 +249,11 @@ public class TagBoardView extends View {
         float availW = w - 2 * EDGE_PAD;
         float availH = h - 2 * EDGE_PAD;
         boardScale = Math.min(availW / BoardSpec.contentW(), availH / BoardSpec.contentH());
-        boardW = board.getWidth() * boardScale;
-        boardH = board.getHeight() * boardScale;
+        boardW = BoardSpec.boardWidthPx() * boardScale;
+        boardH = BoardSpec.boardHeightPx() * boardScale;
         boardLeft = (w - BoardSpec.contentW() * boardScale) / 2f;
         boardTop = (h - BoardSpec.contentH() * boardScale) / 2f;
+        scheduleCommit();
         boardFitsWidth = BoardSpec.contentW() * boardScale >= availW - 0.5f;
     }
 
@@ -179,9 +262,7 @@ public class TagBoardView extends View {
         cv.drawColor(C_BG);
 
 
-        Paint bmp = new Paint(Paint.FILTER_BITMAP_FLAG);
-        cv.drawBitmap(board, null,
-                new RectF(boardLeft, boardTop, boardLeft + boardW, boardTop + boardH), bmp);
+        drawBoard(cv, boardLeft, boardTop, boardScale);
 
         drawEdgeTicks(cv);
         drawCornerLabel(cv);
@@ -239,7 +320,7 @@ public class TagBoardView extends View {
 
         String line1 = serverStatus;
         String line2 = String.format(java.util.Locale.US,
-                "%s  |  tag %.3fmm  |  Long press: layout", BoardSpec.layoutName(), tagMm());
+                "%s  |  tag %.3fmm  |  Pinch: 1x1 - 20x20", BoardSpec.layoutName(), tagMm());
 
         float x = dp(7);
         float y = getHeight() - dp(7);
@@ -272,7 +353,7 @@ public class TagBoardView extends View {
 
     /**
      * 板上 1 个"基线像素"对应的物理长度（米）。
-     * 基准是屏幕上板子真正的宽度：board.getWidth() 个基线像素
+     * 基准是屏幕上板子真正的宽度：BoardSpec.boardWidthPx() 个基线像素
      * → boardWidthMmOnScreen() 毫米。**不能**用屏宽当板宽，否则板子没铺满屏宽时
      * tag 尺寸会系统性偏小（X100 Pro 实测板宽只占屏宽 98.1%）。
      */
@@ -300,7 +381,12 @@ public class TagBoardView extends View {
 
     /** 供 /tagboard/board.png 导出：设备上真正渲染出来的板 bitmap。 */
     public Bitmap boardBitmap() {
-        return board;
+        final int w = Math.max(1, Math.round(BoardSpec.contentW() * boardScale));
+        final int h = Math.max(1, Math.round(BoardSpec.contentH() * boardScale));
+        Bitmap result = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888);
+        Canvas canvas = new Canvas(result);
+        drawBoard(canvas, 0f, 0f, boardScale);
+        return result;
     }
 
     public double screenWidthMm() {
@@ -337,8 +423,8 @@ public class TagBoardView extends View {
         sb.append("\"note\":\"width/height 为自然(竖屏)方向；app 本身锁横屏\"},");
 
         sb.append("\"board\":{");
-        sb.append("\"image_px\":[").append(board.getWidth()).append(',')
-                .append(board.getHeight()).append("],");
+        sb.append("\"image_px\":[").append(BoardSpec.boardWidthPx()).append(',')
+                .append(BoardSpec.boardHeightPx()).append("],");
         sb.append("\"layout\":\"").append(BoardSpec.layoutName()).append("\",");
         sb.append("\"available_layouts\":[\"classic-12\",\"compact-6\"],");
         sb.append("\"checker_cols\":").append(BOARD_COLS).append(',');
@@ -420,8 +506,8 @@ public class TagBoardView extends View {
     /** 运行中切换可选布局，并让服务立即返回新的几何参数。 */
     public void setLayout(String name) {
         BoardSpec.selectLayout(name);
+        gridDensity = BoardSpec.tagCols();
         getContext().getSharedPreferences("board", Context.MODE_PRIVATE).edit().putString("layout", name).apply();
-        buildBoard();
         onSizeChanged(getWidth(), getHeight(), getWidth(), getHeight());
         invalidate();
     }

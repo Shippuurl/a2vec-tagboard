@@ -5,7 +5,7 @@ set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SDK="${ANDROID_SDK_HOME:-$HOME/android-sdk}"
-BT="$SDK/build-tools/34.0.0"
+BT="$SDK/build-tools/${ANDROID_BUILD_TOOLS:-36.0.0}"
 PLATFORM="$SDK/platforms/android-34/android.jar"
 export JAVA_HOME="${JAVA_HOME:-/usr/lib/jvm/java-21-openjdk-amd64}"
 
@@ -28,7 +28,7 @@ echo "[2/6] 链接资源 + 生成 R.java"
   --java "$OUT/gen" \
   --min-sdk-version 24 \
   --target-sdk-version 34 \
-  --version-code 2 --version-name 1.1 \
+  --version-code 7 --version-name 1.2.4 \
   "$OUT/compiled_res/res.zip"
 
 echo "[3/6] 编译 java"

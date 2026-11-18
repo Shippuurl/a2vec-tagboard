@@ -47,9 +47,14 @@ def build_board(tmpdir, layout):
 def main():
     import pupil_apriltags as pat
     parser = argparse.ArgumentParser()
-    parser.add_argument('--layout', choices=('classic-12', 'compact-6'), default='classic-12')
+    parser.add_argument('--layout', default='classic-12')
     args = parser.parse_args()
-    rows, cols, expected = (3, 4, 12) if args.layout == 'classic-12' else (2, 3, 6)
+    if args.layout.startswith('grid-'):
+        cols, rows = map(int, args.layout[5:].split('x'))
+        assert 1 <= cols <= 20 and 1 <= rows <= 20
+        expected = cols * rows
+    else:
+        rows, cols, expected = (3, 4, 12) if args.layout == 'classic-12' else (2, 3, 6)
 
     with tempfile.TemporaryDirectory() as tmp:
         board = build_board(tmp, args.layout)

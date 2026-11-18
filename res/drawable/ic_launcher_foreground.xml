@@ -1,0 +1,56 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- A2Vec 三轴标；几何取自 可复用资源/01-设计资源/Logo/A2Vec-动态Logo/logo-cycle/startup-logo.ts
+     1280 视框。缩放按**外接圆**算：adaptive icon 只会显示 108dp 层中央 72dp，
+     且 66dp 直径圆是安全区，所以把内容最大半径压到 32dp（不是按包围盒缩）。
+     改这里之前先想清楚：按包围盒缩会让三根臂尖伸出裁切圆被切掉。 -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <group
+        android:scaleX="0.046366"
+        android:scaleY="0.046366"
+        android:translateX="25.0214"
+        android:translateY="26.992">
+        <path android:pathData="M 694.93 384.08 Q 668.00 334.00 636.63 381.43 L 360.90 798.24 Q 326.00 851.00 389.26 851.00 L 889.11 851.00 Q 946.00 851.00 919.06 800.90 L 694.93 384.08 Z">
+            <aapt:attr name="android:fillColor">
+                <gradient
+                    android:type="linear"
+                    android:startX="326" android:startY="334"
+                    android:endX="946" android:endY="851">
+                    <item android:offset="0" android:color="#FF606063"/>
+                    <item android:offset="1" android:color="#FF969699"/>
+                </gradient>
+            </aapt:attr>
+        </path>
+    <path
+        android:pathData="M 646.67 678.67 L 678 145"
+        android:strokeColor="#FFFFFFFF"
+        android:strokeWidth="24"
+        android:strokeLineCap="round"/>
+    <path
+        android:pathData="M 646.67 678.67 L 155 1020"
+        android:strokeColor="#FFFFFFFF"
+        android:strokeWidth="24"
+        android:strokeLineCap="round"/>
+    <path
+        android:pathData="M 646.67 678.67 L 1095 1000"
+        android:strokeColor="#FFFFFFFF"
+        android:strokeWidth="24"
+        android:strokeLineCap="round"/>
+    <path
+        android:pathData="M 678 145 m -34 0 a 34 34 0 1 1 68 0 a 34 34 0 1 1 -68 0"
+        android:fillColor="#FFFFFFFF"/>
+    <path
+        android:pathData="M 155 1020 m -34 0 a 34 34 0 1 1 68 0 a 34 34 0 1 1 -68 0"
+        android:fillColor="#FFFFFFFF"/>
+    <path
+        android:pathData="M 1095 1000 m -34 0 a 34 34 0 1 1 68 0 a 34 34 0 1 1 -68 0"
+        android:fillColor="#FFFFFFFF"/>
+        <path
+            android:pathData="M 646.67 678.67 m -17 0 a 17 17 0 1 1 34 0 a 17 17 0 1 1 -34 0"
+            android:fillColor="#FFFFFFFF"/>
+    </group>
+</vector>
